@@ -86,7 +86,7 @@ class SpikeModel:
             tensor = np.zeros(v.shape, dtype=dtype)
             assert tensor.nbytes == expected_size, (
                 f"Size mismatch: tensor.nbytes={tensor.nbytes}, "
-                "expected={expected_size}"
+                f"expected={expected_size}"
             )
             output_tensors.append(
                 SpikeTensor.from_numpy(tensor, k, core_id=core_id)
@@ -101,13 +101,13 @@ class SpikeModel:
         if actual_dtype in {np.dtype(float8_e4m3), np.dtype(float8_e5m2)}:
             assert expected_dtype == "int8", (
                 f"{tensor_type} {tensor_name}: expected dtype int8 for fp8 types, "
-                "got {expected_dtype}"
+                f"got {expected_dtype}"
             )
         else:
             # Strict dtype checking
             assert actual_dtype == expected_dtype, (
                 f"{tensor_type} {tensor_name}: expected dtype {expected_dtype}, "
-                "got {actual_dtype}"
+                f"got {actual_dtype}"
             )
 
     def _validate_io(self, inputs, outputs):
@@ -116,11 +116,11 @@ class SpikeModel:
             tensor_core_id = v.tensor_ref.core_id
             assert tensor_core_id == model_core_id, (
                 f"Input {k}: expected model and tensor on the same core, "
-                "got model core_id {model_core_id} and tensor core_id {tensor_core_id}"
+                f"got model core_id {model_core_id} and tensor core_id {tensor_core_id}"
             )
             assert v.shape == tuple(self.input_tensors_info[k].shape), (
                 f"Input {k}: expected shape {self.input_tensors_info[k].shape}, "
-                "got {v.shape}"
+                f"got {v.shape}"
             )
             self._check_dtype_compatibility(
                 v.dtype, self.input_tensors_info[k].dtype, k, is_input=True
@@ -130,11 +130,11 @@ class SpikeModel:
             tensor_core_id = v.tensor_ref.core_id
             assert tensor_core_id == model_core_id, (
                 f"Output {k}: expected model and tensor on the same core, "
-                "got model core_id {model_core_id} and tensor core_id {tensor_core_id}"
+                f"got model core_id {model_core_id} and tensor core_id {tensor_core_id}"
             )
             assert v.shape == tuple(self.output_tensors_info[k].shape), (
                 f"Output {k}: expected shape {self.output_tensors_info[k].shape}, "
-                "got {v.shape}"
+                f"got {v.shape}"
             )
             self._check_dtype_compatibility(
                 v.dtype, self.output_tensors_info[k].dtype, k, is_input=False

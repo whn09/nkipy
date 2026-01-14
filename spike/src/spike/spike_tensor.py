@@ -71,5 +71,5 @@ class SpikeTensor:
     def __repr__(self) -> str:
         return (
             f"{self.__class__.__name__}"
-            "(shape={self.shape}, dtype={self.dtype}, name={self.name})"
+            f"(shape={self.shape}, dtype={self.dtype}, name={self.name})"
         )
