@@ -4,7 +4,7 @@
 
 **NKIPy is designed for AWS Trainium and depends on components of the [AWS Neuron SDK](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/about-neuron/index.html) to function. While NKIPy uses Neuron SDK components, it is not an official part of the Neuron SDK.** It requires the [Neuron Compiler](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/compiler/index.html) and [Neuron Runtime](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/neuron-runtime/index.html) to compile and execute kernels. NKIPy currently lowers tensor operations to HLO and then calls Neuron Compiler (`neuronx-cc`) to generate NKI code or executables as outputs.
 
-**This project is at a prototype/alpha level and is not intended for customers to use in production deployments.** You should expect bugs, incomplete features, and breaking API changes. There is no guarantee of API stability, ongoing maintenance, or future support at this time. We welcome you to experiment with NKIPy, and we appreciate feedback, bug reports, and contributions via GitHub Issues and Pull Requests.
+**This project is at a prototype/alpha level and is not intended for customers to use in production deployments.** You should expect incomplete features and breaking API changes. There is no guarantee of API stability, ongoing maintenance, or future support at this time. We welcome you to experiment with NKIPy, and we appreciate feedback, bug reports, and contributions via GitHub Issues and Pull Requests.
 
 
 ## Frequently Asked Questions
