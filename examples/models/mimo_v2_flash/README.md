@@ -145,19 +145,34 @@ cos, sin = compute_cos_sin_partial(128, config.head_dim, config.rotary_dim, conf
 - [x] 专家子集支持
 - [x] 48 层完整推理验证
 
-### Phase 2: 完整模型
+### Phase 2: Trainium2 验证 (进行中)
+
+**已验证 Kernel**:
+| Kernel | 状态 | 最大差异 | 运行时间 |
+|--------|------|---------|---------|
+| RMSNorm | ✓ 通过 | 0.000024 | 0.46ms |
+| Token Embedding | ✓ 通过 | 0.000000 | 0.59ms |
+| Full Attention | ✓ 通过 | 0.000010 | 2.96ms |
+| Dense FFN | ✓ 通过 | 0.000010 | 4.06ms |
+| MoE Block | ✗ 需重构 | - | - |
+
+**待完成**:
+- [ ] MoE Block 重构 (替换 `np.where`, `np.any` 等为 nkipy 支持的操作)
+- [ ] SWA Attention 验证
+- [ ] 完整层验证
+
+### Phase 3: 完整模型
 
 - [ ] KV Cache 实现
 - [ ] 增量解码优化
-- [ ] Trainium2 编译验证
 
-### Phase 3: Expert Parallelism
+### Phase 4: Expert Parallelism
 
 - [ ] 256 专家分布在 32+ 设备
 - [ ] `all_to_all` token 分发
 - [ ] 负载均衡优化
 
-### Phase 4: 生产优化
+### Phase 5: 生产优化
 
 - [ ] FP8 量化
 - [ ] Kernel 融合

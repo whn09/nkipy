@@ -12,21 +12,21 @@ Key features:
 
 import numpy as np
 
+from nkipy.core.ops.nn import topk as nkipy_topk
 
-def topk_numpy(x, k, axis=-1, is_ascend=False):
-    """
-    Pure numpy implementation of top-k.
 
-    Args:
-        x: Input array
-        k: Number of top elements
-        axis: Axis along which to find top-k
-        is_ascend: If True, return smallest k values; if False, return largest
+def _is_in_tracing_context():
+    """Check if we're in a nkipy tracing context."""
+    try:
+        from nkipy.core.ops._registry import get_backend
+        get_backend()
+        return True
+    except RuntimeError:
+        return False
 
-    Returns:
-        values: Top-k values
-        indices: Indices of top-k values
-    """
+
+def _topk_pure_numpy(x, k, axis=-1, is_ascend=False):
+    """Pure numpy implementation of top-k for CPU reference."""
     if axis < 0:
         axis = x.ndim + axis
 
@@ -48,24 +48,38 @@ def topk_numpy(x, k, axis=-1, is_ascend=False):
     return values, indices.astype(np.int32)
 
 
+def topk_numpy(x, k, axis=-1, is_ascend=False):
+    """
+    Top-k operation that works both in traced kernels and pure numpy.
+
+    Uses nkipy's topk in tracing context, falls back to pure numpy otherwise.
+
+    Args:
+        x: Input array
+        k: Number of top elements
+        axis: Axis along which to find top-k
+        is_ascend: If True, return smallest k values; if False, return largest
+
+    Returns:
+        values: Top-k values
+        indices: Indices of top-k values
+    """
+    if _is_in_tracing_context():
+        values, indices = nkipy_topk(x, k=k, axis=axis, is_ascend=is_ascend)
+        return values, indices.astype(np.int32)
+    else:
+        return _topk_pure_numpy(x, k, axis, is_ascend)
+
+
 def sigmoid(x):
-    """Numerically stable sigmoid function."""
+    """Numerically stable sigmoid function.
+
+    使用 clamp 来避免溢出，适用于 nkipy tracing。
+    """
     x = x.astype(np.float32)
-    # Use the stable formula: sigmoid(x) = 1 / (1 + exp(-x))
-    # For negative x: sigmoid(x) = exp(x) / (1 + exp(x)) to avoid overflow
-    pos_mask = x >= 0
-    neg_mask = ~pos_mask
-
-    result = np.zeros_like(x)
-
-    # For positive x
-    result[pos_mask] = 1.0 / (1.0 + np.exp(-x[pos_mask]))
-
-    # For negative x (more stable)
-    exp_x = np.exp(x[neg_mask])
-    result[neg_mask] = exp_x / (1.0 + exp_x)
-
-    return result
+    # Clamp to avoid overflow (use maximum/minimum for nkipy compatibility)
+    x_clipped = np.maximum(np.minimum(x, 88.0), -88.0)
+    return 1.0 / (1.0 + np.exp(-x_clipped))
 
 
 def moe_router_sigmoid(

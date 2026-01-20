@@ -74,9 +74,11 @@ def moe_block(
     )
 
     # 3. 如果只有专家子集，用 modulo 映射
+    # 注意: modulo 操作在 nkipy tracing 中不支持，只在 CPU 模式下使用
     if num_available_experts < num_router_experts:
         # 将 0-255 的专家索引映射到 0-(num_available_experts-1)
-        topk_indices = topk_indices % num_available_experts
+        # 使用 floor division 和 subtraction 代替 modulo: x % n = x - (x // n) * n
+        topk_indices = topk_indices - (topk_indices // num_available_experts) * num_available_experts
 
     # 4. Apply selected experts and combine
     expert_output = apply_selected_experts_batched(

@@ -27,8 +27,8 @@ def silu_kernel(x):
         SiLU activated tensor
     """
     x = x.astype(np.float32)
-    # Clip to avoid overflow in exp
-    x_clipped = np.clip(x, -88.0, 88.0)
+    # Clip to avoid overflow in exp (use maximum/minimum instead of clip for nkipy compatibility)
+    x_clipped = np.maximum(np.minimum(x, 88.0), -88.0)
     sigmoid = 1.0 / (1.0 + np.exp(-x_clipped))
     return x * sigmoid
 
