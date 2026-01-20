@@ -79,9 +79,12 @@ class MiMoConfig:
     num_devices: int = 32  # Number of Trainium2 devices
     experts_per_device: int = 8  # 256 / 32 = 8 experts per device
 
-    # Full attention layer indices (layer 0 + every 6th layer approximately)
-    # This pattern follows the typical MiMo architecture
-    full_attention_layers: List[int] = field(default_factory=lambda: [0, 6, 12, 18, 24, 30, 36, 42])
+    # Full attention layer indices from the actual MiMo-V2-Flash model
+    # Pattern: 0, then 5, 11, 17, 23, 29, 35, 41, 47 (every 6 layers starting from 5)
+    full_attention_layers: List[int] = field(default_factory=lambda: [0, 5, 11, 17, 23, 29, 35, 41, 47])
+
+    # Dense layer indices (Layer 0 is dense, rest are MoE)
+    dense_layers: List[int] = field(default_factory=lambda: [0])
 
     def __post_init__(self):
         # Validate heterogeneous GQA setup for full attention
@@ -157,6 +160,10 @@ class MiMoConfig:
     def is_full_attention_layer(self, layer_idx: int) -> bool:
         """Check if a layer uses full attention (vs SWA)"""
         return layer_idx in self.full_attention_layers
+
+    def is_dense_layer(self, layer_idx: int) -> bool:
+        """Check if a layer is dense (vs MoE)"""
+        return layer_idx in self.dense_layers
 
     def get_num_kv_heads(self, layer_idx: int) -> int:
         """Get the number of KV heads for a specific layer"""

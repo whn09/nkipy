@@ -30,7 +30,7 @@ from kernels.moe_block import moe_block
 from kernels.token_embedding import token_embedding
 
 
-def create_layer_weights(config: MiMoConfig, layer_idx: int, dtype=np.float32):
+def create_layer_weights(config: MiMoConfig, layer_idx: int, dtype=np.float32, verbose=False):
     """为单层创建随机权重"""
     is_full = config.is_full_attention_layer(layer_idx)
 
@@ -41,6 +41,9 @@ def create_layer_weights(config: MiMoConfig, layer_idx: int, dtype=np.float32):
         k_size = config.k_proj_size_swa
         v_size = config.v_proj_size_swa
 
+    if verbose:
+        print("    创建 attention 权重...", end=" ", flush=True)
+
     weights = {
         # Attention weights
         "q_weight": np.random.randn(config.hidden_size, config.q_proj_size).astype(dtype) * 0.02,
@@ -48,20 +51,29 @@ def create_layer_weights(config: MiMoConfig, layer_idx: int, dtype=np.float32):
         "v_weight": np.random.randn(config.hidden_size, v_size).astype(dtype) * 0.02,
         "o_weight": np.random.randn(config.o_proj_size, config.hidden_size).astype(dtype) * 0.02,
         "input_ln_weight": np.ones(config.hidden_size, dtype=dtype),
-
-        # MoE weights
         "post_attn_ln_weight": np.ones(config.hidden_size, dtype=dtype),
         "router_weight": np.random.randn(config.hidden_size, config.num_routed_experts).astype(dtype) * 0.02,
-        "expert_gate": np.random.randn(
-            config.num_routed_experts, config.hidden_size, config.moe_intermediate_size
-        ).astype(dtype) * 0.02,
-        "expert_up": np.random.randn(
-            config.num_routed_experts, config.hidden_size, config.moe_intermediate_size
-        ).astype(dtype) * 0.02,
-        "expert_down": np.random.randn(
-            config.num_routed_experts, config.moe_intermediate_size, config.hidden_size
-        ).astype(dtype) * 0.02,
     }
+
+    if verbose:
+        print("done", flush=True)
+        print(f"    创建 {config.num_routed_experts} 专家权重...", end=" ", flush=True)
+
+    # MoE weights - 使用更高效的方式
+    weights["expert_gate"] = (np.random.randn(
+        config.num_routed_experts, config.hidden_size, config.moe_intermediate_size
+    ) * 0.02).astype(dtype)
+
+    weights["expert_up"] = (np.random.randn(
+        config.num_routed_experts, config.hidden_size, config.moe_intermediate_size
+    ) * 0.02).astype(dtype)
+
+    weights["expert_down"] = (np.random.randn(
+        config.num_routed_experts, config.moe_intermediate_size, config.hidden_size
+    ) * 0.02).astype(dtype)
+
+    if verbose:
+        print("done", flush=True)
 
     return weights
 
@@ -223,21 +235,25 @@ def main():
         cos = cos_full if is_full else cos_swa
         sin = sin_full if is_full else sin_swa
 
-        print(f"\nLayer {layer_idx:2d}/{config.num_hidden_layers} [{attn_type:4s}]", end=" ")
+        print(f"\n[Layer {layer_idx:2d}/{config.num_hidden_layers}] {attn_type}", flush=True)
 
         layer_start = time.time()
 
         # 创建权重 (逐层释放以节省内存)
-        weights = create_layer_weights(config, layer_idx)
+        weights = create_layer_weights(config, layer_idx, verbose=True)
 
         # 运行层
+        print("    运行 forward...", end=" ", flush=True)
         hidden_states = run_layer(hidden_states, weights, cos, sin, config, layer_idx)
+        print("done", flush=True)
 
         # 释放权重
         del weights
+        import gc
+        gc.collect()
 
         layer_time = time.time() - layer_start
-        print(f"- {layer_time:.2f}s - output: {hidden_states.shape}")
+        print(f"    完成: {layer_time:.1f}s, output shape: {hidden_states.shape}", flush=True)
 
     total_time = time.time() - total_start
 

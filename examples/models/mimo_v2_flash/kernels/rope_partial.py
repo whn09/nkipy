@@ -64,13 +64,15 @@ def rope_partial(xq, xk, freqs_cos, freqs_sin, rotary_dim: int):
     Args:
         xq: Query tensor [batch, seq_len, n_heads, head_dim]
         xk: Key tensor [batch, seq_len, n_kv_heads, head_dim]
-        freqs_cos: Cosine frequencies [seq_len, rotary_dim // 2]
-        freqs_sin: Sine frequencies [seq_len, rotary_dim // 2]
+        freqs_cos: Cosine frequencies [max_seq_len, rotary_dim // 2]
+        freqs_sin: Sine frequencies [max_seq_len, rotary_dim // 2]
         rotary_dim: Number of dimensions to rotate (e.g., 64)
 
     Returns:
         xq_out, xk_out: Rotated tensors with same shape as inputs
     """
+    seq_len = xq.shape[1]
+
     # Split into rotary and pass-through parts
     # xq: [batch, seq_len, n_heads, head_dim] -> rotary [batch, seq_len, n_heads, rotary_dim]
     xq_rot = xq[:, :, :, :rotary_dim]
@@ -79,7 +81,10 @@ def rope_partial(xq, xk, freqs_cos, freqs_sin, rotary_dim: int):
     xk_rot = xk[:, :, :, :rotary_dim]
     xk_pass = xk[:, :, :, rotary_dim:]
 
-    # Reshape freqs for broadcasting: [1, seq_len, 1, rotary_dim // 2]
+    # Slice freqs to actual sequence length and reshape for broadcasting
+    # [seq_len, rotary_dim // 2] -> [1, seq_len, 1, rotary_dim // 2]
+    freqs_cos = freqs_cos[:seq_len]
+    freqs_sin = freqs_sin[:seq_len]
     freqs_cos = np.expand_dims(freqs_cos, axis=(0, 2))
     freqs_sin = np.expand_dims(freqs_sin, axis=(0, 2))
 

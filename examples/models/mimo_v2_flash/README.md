@@ -20,9 +20,10 @@ MiMo-V2-Flash (309B 总参数, 15B 活跃参数) MoE 模型在 AWS Trainium2 上
 
 ### 关键特性
 
-- **混合注意力**: 全局注意力 + 滑动窗口注意力 (SWA)
+- **混合注意力**: 全局注意力 (层 0, 5, 11, 17, 23, 29, 35, 41, 47) + 滑动窗口注意力 (SWA)
 - **异构头维度**: Q/K 使用 192 维, V 使用 128 维
-- **部分 RoPE**: 仅 33.4% 的维度使用旋转位置编码
+- **部分 RoPE**: 仅 33.4% 的维度使用旋转位置编码 (64/192)
+- **Dense + MoE**: 层 0 使用 Dense FFN, 层 1-47 使用 MoE
 - **Sigmoid 路由**: 使用 sigmoid (非 softmax) 进行专家选择
 - **Expert Parallelism**: 支持 32+ 设备分布式专家计算
 
@@ -33,9 +34,11 @@ mimo_v2_flash/
 ├── __init__.py                 # 模块导出
 ├── config.py                   # 模型配置 (MiMoConfig)
 ├── model.py                    # 主模型类
-├── layer.py                    # Transformer 层
+├── layer.py                    # Transformer 层 (MiMoLayer, MiMoLayerCPU)
 ├── prepare_weights.py          # HuggingFace 权重转换
 ├── run_example.py              # 运行示例
+├── run_with_weights.py         # 使用真实权重测试 (CPU)
+├── generate.py                 # 文本生成
 ├── test_kernels.py             # 单元测试
 └── kernels/
     ├── rmsnorm.py              # RMSNorm
@@ -44,6 +47,7 @@ mimo_v2_flash/
     ├── token_embedding.py      # Token 嵌入
     ├── attention_full.py       # 全局注意力
     ├── attention_swa.py        # 滑动窗口注意力
+    ├── ffn.py                  # Dense FFN (层 0)
     ├── moe_router.py           # Sigmoid 路由 + Top-8
     ├── moe_expert.py           # 专家 FFN
     └── moe_block.py            # MoE 块 (含 EP 支持)
@@ -51,100 +55,138 @@ mimo_v2_flash/
 
 ## 快速开始
 
-### 1. 运行单元测试
+### 1. 安装依赖
+
+```bash
+uv pip install torch transformers safetensors huggingface_hub
+```
+
+### 2. 下载权重 (专家子集)
 
 ```bash
 cd examples/models/mimo_v2_flash
 
-# 运行 kernel 测试 (无需 Trainium)
+# 下载 8 专家子集 (~18GB)
+python run_example.py --mode download --expert-subset 0 1 2 3 4 5 6 7
+```
+
+### 3. 运行推理测试
+
+```bash
+# 使用真实权重测试 48 层
+python run_with_weights.py --weights-path tmp_mimo_weights/mimo_weights.safetensors --num-layers 48
+
+# 快速测试 2 层
+python run_with_weights.py --num-layers 2 --seq-len 16
+```
+
+### 4. 文本生成
+
+```bash
+# 使用 4 层进行快速测试 (非真实输出)
+python generate.py --prompt "Hello" --max-tokens 10 --num-layers 4
+
+# 使用更多层 (更慢但更真实)
+python generate.py --prompt "What is AI?" --max-tokens 5 --num-layers 12
+```
+
+## 详细用法
+
+### 运行单元测试
+
+```bash
+# 运行 kernel 测试 (无需权重)
 python run_example.py --mode test
 ```
 
-### 2. 使用随机权重测试
+### 使用随机权重测试
 
 ```bash
 # 测试 8 专家子集，2 层
 python run_example.py --mode random --num-experts 8 --num-layers 2
+
+# 完整 256 专家模拟 (慢)
+python run_example.py --mode random --num-experts 256 --num-layers 2
 ```
 
-### 3. 下载 HuggingFace 权重
-
-```bash
-# 安装依赖
-pip install torch transformers safetensors accelerate
-
-# 下载专家子集 (用于测试)
-python run_example.py --mode download --expert-subset 0 1 2 3 4 5 6 7
-
-# 下载完整权重 (需要大量内存)
-python run_example.py --mode download
-```
-
-### 4. 运行推理
+### Python API
 
 ```python
 from config import MiMoConfig
-from model import MiMoV2FlashModel
-from prepare_weights import load_weights
+from layer import MiMoLayerCPU
+from kernels.rope_partial import compute_cos_sin_partial
+from kernels.token_embedding import token_embedding
+from kernels.rmsnorm import rmsnorm
+import numpy as np
 
-# 加载配置和权重
-config = MiMoConfig()
-weights = load_weights("tmp_mimo_weights/mimo_weights.safetensors", config)
+# 创建配置
+config = MiMoConfig(num_hidden_layers=2)
 
-# 初始化模型 (使用 8 专家子集)
-model = MiMoV2FlashModel(weights, config, expert_subset=list(range(8)))
+# 预计算 RoPE
+cos, sin = compute_cos_sin_partial(128, config.head_dim, config.rotary_dim, config.rope_theta_full)
+
+# 加载权重...
+# layer_weights = extract_layer_weights(all_weights, 0, config)
+
+# 创建层
+# layer = MiMoLayerCPU(0, config, layer_weights, cos, sin)
 
 # 推理
-import numpy as np
-input_ids = np.array([[1, 2, 3, 4, 5]], dtype=np.uint32)
-output = model.forward(input_ids)
+# hidden_states = layer.forward(hidden_states)
 ```
 
 ## 开发阶段
 
-### Phase 1: 单设备测试 (当前)
+### Phase 1: 核心实现 (已完成)
 
-- 8 专家子集
-- 验证各 kernel 正确性
-- CPU/单 Trainium2 测试
+- [x] 所有 kernel 实现
+- [x] CPU 测试 (MiMoLayerCPU)
+- [x] HuggingFace 权重转换
+- [x] 专家子集支持
+- [x] 48 层完整推理验证
 
-```bash
-python run_example.py --mode random --num-experts 8
-```
+### Phase 2: 完整模型
 
-### Phase 2: 完整模型 (专家子集)
-
-- 48 层完整 Transformer
-- 使用专家子集减少内存
+- [ ] KV Cache 实现
+- [ ] 增量解码优化
+- [ ] Trainium2 编译验证
 
 ### Phase 3: Expert Parallelism
 
-- 256 专家分布在 32+ 设备
-- 使用 `all_to_all` 进行 token 分发
+- [ ] 256 专家分布在 32+ 设备
+- [ ] `all_to_all` token 分发
+- [ ] 负载均衡优化
 
-```python
-config = MiMoConfig(num_devices=32)  # 每设备 8 专家
-```
+### Phase 4: 生产优化
 
-### Phase 4: 优化
-
-- KV Cache 实现
-- FP8 量化 (可选)
-- Kernel 融合优化
+- [ ] FP8 量化
+- [ ] Kernel 融合
+- [ ] 性能 profiling
 
 ## 硬件要求
 
-| 配置 | 设备数 | 每设备专家数 |
-|------|--------|-------------|
-| 开发测试 | 1 | 8 (子集) |
-| 完整模型 | 32 | 8 |
-| 优化配置 | 64 | 4 |
+| 配置 | 设备数 | 每设备专家数 | 内存需求 |
+|------|--------|-------------|----------|
+| 开发测试 | 1 | 8 (子集) | ~20GB |
+| 完整模型 | 32 | 8 | ~600GB |
+| 优化配置 | 64 | 4 | ~600GB |
+
+## 性能参考
+
+在 CPU 上测试 (不代表 Trainium2 性能):
+
+| 配置 | 层数 | 序列长度 | 耗时 |
+|------|------|----------|------|
+| 8 专家 | 2 | 16 | ~1.3s |
+| 8 专家 | 12 | 16 | ~9.5s |
+| 8 专家 | 48 | 16 | ~37s |
 
 ## 注意事项
 
-1. **内存**: 完整 256 专家需要约 600GB 显存
-2. **权重下载**: HuggingFace 模型约 600GB
-3. **编译时间**: 首次 kernel 编译可能需要数分钟
+1. **专家子集**: 使用 modulo 映射将 256 专家路由映射到可用专家数，输出不代表真实模型行为
+2. **数值稳定性**: 中间值可能很大，但 RMSNorm 会归一化最终输出
+3. **无 KV Cache**: 当前实现每次重新计算整个序列，生成速度慢
+4. **权重格式**: 支持 FP8/BF16/FP16 自动转换为 FP32
 
 ## 参考
 

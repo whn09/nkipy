@@ -38,19 +38,26 @@ def moe_block(
     This is the single-device implementation. For multi-device EP,
     use moe_block_ep.
 
+    自动检测可用专家数量，支持专家子集测试：
+    - 如果只加载了 8 个专家，会用 modulo 映射 256 个路由选择到 8 个专家
+
     Args:
         hidden_states: [batch_size * seq_len, hidden_size]
         post_attn_layernorm_weight: [hidden_size]
         router_weight: [hidden_size, num_experts]
-        expert_gate_weights: [num_experts, hidden_size, intermediate_size]
-        expert_up_weights: [num_experts, hidden_size, intermediate_size]
-        expert_down_weights: [num_experts, intermediate_size, hidden_size]
+        expert_gate_weights: [num_available_experts, hidden_size, intermediate_size]
+        expert_up_weights: [num_available_experts, hidden_size, intermediate_size]
+        expert_down_weights: [num_available_experts, intermediate_size, hidden_size]
         config: MiMoConfig
 
     Returns:
         output: [batch_size * seq_len, hidden_size]
     """
     original_dtype = hidden_states.dtype
+
+    # 检测实际可用的专家数量
+    num_available_experts = expert_gate_weights.shape[0]
+    num_router_experts = config.num_routed_experts
 
     # Store for residual
     residual = hidden_states
@@ -62,11 +69,16 @@ def moe_block(
     topk_indices, topk_weights, _ = moe_router_sigmoid(
         hidden_states,
         router_weight,
-        num_experts=config.num_routed_experts,
+        num_experts=num_router_experts,
         top_k=config.experts_per_tok,
     )
 
-    # 3. Apply selected experts and combine
+    # 3. 如果只有专家子集，用 modulo 映射
+    if num_available_experts < num_router_experts:
+        # 将 0-255 的专家索引映射到 0-(num_available_experts-1)
+        topk_indices = topk_indices % num_available_experts
+
+    # 4. Apply selected experts and combine
     expert_output = apply_selected_experts_batched(
         hidden_states,
         topk_indices,
@@ -74,10 +86,10 @@ def moe_block(
         expert_gate_weights,
         expert_up_weights,
         expert_down_weights,
-        num_experts=config.num_routed_experts,
+        num_experts=num_available_experts,
     )
 
-    # 4. Residual connection
+    # 5. Residual connection
     output = expert_output + residual
 
     return output.astype(original_dtype)

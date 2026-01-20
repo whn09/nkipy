@@ -18,6 +18,8 @@ def silu_kernel(x):
     """
     SiLU (Swish) activation function: x * sigmoid(x)
 
+    使用数值稳定的实现，避免 exp 溢出。
+
     Args:
         x: Input tensor
 
@@ -25,7 +27,10 @@ def silu_kernel(x):
         SiLU activated tensor
     """
     x = x.astype(np.float32)
-    return x * (1.0 / (1.0 + np.exp(-x)))
+    # Clip to avoid overflow in exp
+    x_clipped = np.clip(x, -88.0, 88.0)
+    sigmoid = 1.0 / (1.0 + np.exp(-x_clipped))
+    return x * sigmoid
 
 
 def moe_expert_ffn(

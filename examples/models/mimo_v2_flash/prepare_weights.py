@@ -112,6 +112,12 @@ def download_and_convert_weights(
         expert_subset=expert_subset,
     )
 
+    # Make all tensors contiguous before saving
+    print("Making tensors contiguous...")
+    for key in converted_weights:
+        if not converted_weights[key].is_contiguous():
+            converted_weights[key] = converted_weights[key].contiguous()
+
     # Save as safetensors
     print(f"Saving to {output_path}...")
     save_file(converted_weights, output_path)
@@ -125,7 +131,11 @@ def convert_hf_weights(
     expert_subset: Optional[List[int]] = None,
 ) -> Dict[str, "torch.Tensor"]:
     """
-    Convert HuggingFace state dict to nkipy format.
+    Convert HuggingFace MiMo-V2-Flash state dict to nkipy format.
+
+    MiMo-V2-Flash structure:
+    - Layer 0: Dense layer (no MoE, uses mlp.gate_proj/up_proj/down_proj)
+    - Layer 1-47: MoE layers (256 experts per layer)
 
     Args:
         state_dict: HuggingFace model state dict
@@ -158,6 +168,8 @@ def convert_hf_weights(
         hf_prefix = f"model.layers.{layer_idx}"
         nki_prefix = f"layers.{layer_idx}"
 
+        print(f"  Converting layer {layer_idx}...", end=" ", flush=True)
+
         # Attention weights (separate Q, K, V for MiMo due to heterogeneous dims)
         converted[f"{nki_prefix}.q_weight"] = state_dict[
             f"{hf_prefix}.self_attn.q_proj.weight"
@@ -184,48 +196,74 @@ def convert_hf_weights(
             f"{hf_prefix}.post_attention_layernorm.weight"
         ]
 
-        # Router weight
-        converted[f"{nki_prefix}.router_weight"] = state_dict[
-            f"{hf_prefix}.mlp.gate.weight"
-        ].T  # [hidden, num_experts]
+        # Check if this is a dense layer (layer 0) or MoE layer (layer 1+)
+        is_moe_layer = f"{hf_prefix}.mlp.gate.weight" in state_dict
 
-        # Expert weights
-        if expert_subset is not None:
-            # Only include specified experts
-            for local_idx, expert_idx in enumerate(expert_subset):
-                converted[f"{nki_prefix}.expert.{expert_idx}.gate_weight"] = state_dict[
-                    f"{hf_prefix}.mlp.experts.{expert_idx}.gate_proj.weight"
-                ].T
+        if is_moe_layer:
+            # MoE layer (layers 1-47)
+            # Router weight: mlp.gate.weight [256, 4096] -> [4096, 256]
+            converted[f"{nki_prefix}.router_weight"] = state_dict[
+                f"{hf_prefix}.mlp.gate.weight"
+            ].T
 
-                converted[f"{nki_prefix}.expert.{expert_idx}.up_weight"] = state_dict[
-                    f"{hf_prefix}.mlp.experts.{expert_idx}.up_proj.weight"
-                ].T
+            # Optional: e_score_correction_bias
+            if f"{hf_prefix}.mlp.gate.e_score_correction_bias" in state_dict:
+                converted[f"{nki_prefix}.e_score_correction_bias"] = state_dict[
+                    f"{hf_prefix}.mlp.gate.e_score_correction_bias"
+                ]
 
-                converted[f"{nki_prefix}.expert.{expert_idx}.down_weight"] = state_dict[
-                    f"{hf_prefix}.mlp.experts.{expert_idx}.down_proj.weight"
-                ].T
+            # Expert weights
+            if expert_subset is not None:
+                # Only include specified experts
+                for expert_idx in expert_subset:
+                    gate_key = f"{hf_prefix}.mlp.experts.{expert_idx}.gate_proj.weight"
+                    up_key = f"{hf_prefix}.mlp.experts.{expert_idx}.up_proj.weight"
+                    down_key = f"{hf_prefix}.mlp.experts.{expert_idx}.down_proj.weight"
+
+                    if gate_key in state_dict:
+                        converted[f"{nki_prefix}.expert.{expert_idx}.gate_weight"] = state_dict[gate_key].T
+                        converted[f"{nki_prefix}.expert.{expert_idx}.up_weight"] = state_dict[up_key].T
+                        converted[f"{nki_prefix}.expert.{expert_idx}.down_weight"] = state_dict[down_key].T
+            else:
+                # Include all experts - stack into single tensors
+                num_experts = 256
+
+                gate_weights = []
+                up_weights = []
+                down_weights = []
+
+                for expert_idx in range(num_experts):
+                    gate_key = f"{hf_prefix}.mlp.experts.{expert_idx}.gate_proj.weight"
+                    up_key = f"{hf_prefix}.mlp.experts.{expert_idx}.up_proj.weight"
+                    down_key = f"{hf_prefix}.mlp.experts.{expert_idx}.down_proj.weight"
+
+                    if gate_key in state_dict:
+                        gate_weights.append(state_dict[gate_key].T)
+                        up_weights.append(state_dict[up_key].T)
+                        down_weights.append(state_dict[down_key].T)
+
+                if gate_weights:
+                    converted[f"{nki_prefix}.expert_gate_weights"] = torch.stack(gate_weights)
+                    converted[f"{nki_prefix}.expert_up_weights"] = torch.stack(up_weights)
+                    converted[f"{nki_prefix}.expert_down_weights"] = torch.stack(down_weights)
+
+            print(f"MoE ({len(gate_weights) if not expert_subset else len(expert_subset)} experts)")
         else:
-            # Include all experts - stack into single tensors
-            num_experts = 256  # MiMo-V2-Flash has 256 experts
+            # Dense layer (layer 0)
+            # Standard FFN: gate_proj, up_proj, down_proj
+            converted[f"{nki_prefix}.gate_weight"] = state_dict[
+                f"{hf_prefix}.mlp.gate_proj.weight"
+            ].T
 
-            gate_weights = []
-            up_weights = []
-            down_weights = []
+            converted[f"{nki_prefix}.up_weight"] = state_dict[
+                f"{hf_prefix}.mlp.up_proj.weight"
+            ].T
 
-            for expert_idx in range(num_experts):
-                gate_weights.append(
-                    state_dict[f"{hf_prefix}.mlp.experts.{expert_idx}.gate_proj.weight"].T
-                )
-                up_weights.append(
-                    state_dict[f"{hf_prefix}.mlp.experts.{expert_idx}.up_proj.weight"].T
-                )
-                down_weights.append(
-                    state_dict[f"{hf_prefix}.mlp.experts.{expert_idx}.down_proj.weight"].T
-                )
+            converted[f"{nki_prefix}.down_weight"] = state_dict[
+                f"{hf_prefix}.mlp.down_proj.weight"
+            ].T
 
-            converted[f"{nki_prefix}.expert_gate_weights"] = torch.stack(gate_weights)
-            converted[f"{nki_prefix}.expert_up_weights"] = torch.stack(up_weights)
-            converted[f"{nki_prefix}.expert_down_weights"] = torch.stack(down_weights)
+            print("Dense")
 
     return converted
 

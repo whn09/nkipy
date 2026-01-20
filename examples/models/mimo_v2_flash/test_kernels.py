@@ -250,9 +250,11 @@ def test_config():
     assert config.gqa_ratio_swa == 8
 
     # Check full attention layer detection
+    # Actual pattern: [0, 5, 11, 17, 23, 29, 35, 41, 47]
     assert config.is_full_attention_layer(0) == True
     assert config.is_full_attention_layer(1) == False
-    assert config.is_full_attention_layer(6) == True
+    assert config.is_full_attention_layer(5) == True
+    assert config.is_full_attention_layer(6) == False
 
     print("  Config: PASSED")
 
